@@ -1,44 +1,31 @@
-mod runtime;
-mod lua_bindings;
-mod fs;
-
-use runtime::*;
-use lua_bindings::LuaRuntime;
-use tokio::runtime::Builder;
+mod luau_bindings;
+use luau_bindings::*;
+use std::ffi::CString;
 use std::env;
-use std::fs::read_to_string;
+use std::fs;
 
 fn main() {
-    // Get CLI arguments
-    let args: Vec<String> = env::args().collect();
+    unsafe {
+        let L = luauL_newstate();
+        luauL_openlibs(L);
 
-    if args.len() < 2 {
-        eprintln!("Usage: {} <lua_script>", args[0]);
-        return;
-    }
+        let args: Vec<String> = env::args().collect();
+        let code = if args.len() > 1 {
+            fs::read_to_string(&args[1]).expect("Failed to read file")
+        } else {
+            println!("Enter Lua code (Ctrl+D to finish):");
+            let mut input = String::new();
+            std::io::stdin().read_to_string(&mut input).unwrap();
+            input
+        };
 
-    let script_path = &args[1];
+        let script = CString::new(code).unwrap();
 
-    // Read Lua script
-    let script_content = match read_to_string(script_path) {
-        Ok(content) => content,
-        Err(e) => {
-            eprintln!("Failed to read {}: {}", script_path, e);
-            return;
+        if luauL_dostring(L, script.as_ptr()) != 0 {
+            let err = luau_tolstring(L, -1, std::ptr::null_mut());
+            println!("Error: {}", CString::from_raw(err as *mut i8).to_str().unwrap());
         }
-    };
 
-    // Create async runtime
-    let rt = Builder::new_multi_thread().enable_all().build().unwrap();
-    rt.block_on(async {
-        // Spawn the Lua runtime
-        let lua = LuaRuntime::new();
-        lua.run(&script_content);
-
-        // Example async task (optional)
-        spawn(async {
-            delay(2).await;
-            println!("Example delay finished!");
-        });
-    });
+        luau_close(L);
+    }
 }
